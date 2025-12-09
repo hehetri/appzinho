@@ -246,29 +246,71 @@ class ItemEditor:
             entry.insert(0, item["stats"].get(key, 0))
 
     # ------------------------------------------------------
+    def _extract_form_values(self) -> Dict[str, object] | None:
+        """Lê os campos da tela e converte para um dicionário pronto para salvar.
+
+        Retorna ``None`` se algum campo numérico tiver um valor inválido, exibindo
+        um alerta para o usuário.
+        """
+
+        data: Dict[str, object] = {"stats": {}}
+
+        try:
+            for key, entry in self.fields.items():
+                value = entry.get()
+                if key in NUMERIC_FIELDS:
+                    data[key] = int(value) if value else 0
+                else:
+                    data[key] = value
+
+            for key, entry in self.stats_fields.items():
+                value = entry.get()
+                data["stats"][key] = int(value) if value else 0
+
+        except ValueError as exc:
+            messagebox.showerror(
+                "Erro de validação",
+                f"Campo numérico inválido: {exc}\nVerifique os valores digitados.",
+            )
+            return None
+
+        return data
+
     def save_item_changes(self):
+        """Aplica as alterações do formulário ao item atualmente selecionado."""
         if not self.current_item:
             messagebox.showwarning("Atenção", "Selecione um item primeiro.")
             return
 
-        for key, entry in self.fields.items():
-            value = entry.get()
-            if key in NUMERIC_FIELDS:
-                self.current_item[key] = int(value) if value else 0
+        updated = self._extract_form_values()
+        if not updated:
+            return
+
+        # Atualiza apenas os campos, preservando a referência do item em self.items
+        for key, value in updated.items():
+            if key == "stats":
+                self.current_item[key].update(value)
             else:
                 self.current_item[key] = value
-
-        for key, entry in self.stats_fields.items():
-            value = entry.get()
-            self.current_item["stats"][key] = int(value) if value else 0
 
         messagebox.showinfo("OK", "Alterações aplicadas!")
 
     # ------------------------------------------------------
     def save_bin(self):
+        """Salva o arquivo ``items.bin`` com as alterações aplicadas."""
         if not self.items:
             messagebox.showwarning("Atenção", "Nenhum item carregado para salvar.")
             return
+
+        # Garante que o item selecionado tenha as últimas edições antes de salvar
+        if self.current_item:
+            updated = self._extract_form_values()
+            if updated:
+                for key, value in updated.items():
+                    if key == "stats":
+                        self.current_item[key].update(value)
+                    else:
+                        self.current_item[key] = value
 
         with builtins.open("items.bin", "wb") as bin_file:
             bin_file.write(b"\x00\x00\x00\x00")  # header original
@@ -306,7 +348,7 @@ class ItemEditor:
                 }
 
                 for key, start in offsets.items():
-                    block[start : start + 4] = to_bytes(stats[key])
+                    block[start : start + 4] = to_bytes(int(stats[key]))
 
                 bin_file.write(block)
 

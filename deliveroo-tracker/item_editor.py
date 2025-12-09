@@ -91,23 +91,22 @@ def parse_stats(block: bytes) -> Dict[str, int]:
     return {name: get_int(block[start:end]) for name, (start, end) in offsets.items()}
 
 
-def load_items(bin_path: str = "items.bin") -> List[Dict[str, object]]:
-    """Lê todos os itens do arquivo binário.
+def load_items(bin_path: str = "items.bin") -> tuple[bytes, List[Dict[str, object]]]:
+    """Lê todos os itens do arquivo binário preservando os bytes originais."""
 
-    A função evita sobrescrever o handle de arquivo, garantindo que chamadas a
-    `.read()` continuem funcionando.
-    """
     items: List[Dict[str, object]] = []
+    header = b"\x00\x00\x00\x00"
 
     try:
         with builtins.open(bin_path, "rb") as bin_file:
-            bin_file.read(4)  # ignorar header
+            header = bin_file.read(4)
 
             while True:
                 block = bin_file.read(MEMSIZE)
                 if len(block) < MEMSIZE:
                     break
 
+                raw_block = bytearray(block)
                 item: Dict[str, object] = {
                     "id": get_int(block[0:4]),
                     "name": removenullbyte(block[4:35]),
@@ -117,6 +116,7 @@ def load_items(bin_path: str = "items.bin") -> List[Dict[str, object]]:
                     "sell": get_int(block[45:49]),
                     "days": get_int(block[56:58]),
                     "stats": parse_stats(block),
+                    "raw": raw_block,
                 }
 
                 s_id = str(item["id"])
@@ -147,7 +147,7 @@ def load_items(bin_path: str = "items.bin") -> List[Dict[str, object]]:
     except Exception as exc:  # pragma: no cover - erros exibidos via messagebox
         messagebox.showerror("Erro", str(exc))
 
-    return items
+    return header, items
 
 
 # ============================================================
@@ -164,7 +164,7 @@ class ItemEditor:
         self.root.title("Bout Evolution - Item Editor (BIN)")
         self.root.geometry("950x600")
 
-        self.items = load_items()
+        self.header, self.items = load_items()
         self.current_item: Dict[str, object] | None = None
 
         # ---------------- LISTA (ESQUERDA) ----------------
@@ -347,10 +347,10 @@ class ItemEditor:
                 return
 
         with builtins.open("items.bin", "wb") as bin_file:
-            bin_file.write(b"\x00\x00\x00\x00")  # header original
+            bin_file.write(self.header or b"\x00\x00\x00\x00")
 
             for item in self.items:
-                block = bytearray(MEMSIZE)
+                block = bytearray(item.get("raw", bytearray(MEMSIZE)))
 
                 block[0:4] = to_bytes(item["id"])
                 block[4:35] = pad_string(str(item["name"]))
@@ -384,6 +384,7 @@ class ItemEditor:
                 for key, start in offsets.items():
                     block[start : start + 4] = to_bytes(int(stats[key]))
 
+                item["raw"] = block
                 bin_file.write(block)
 
         messagebox.showinfo("Sucesso!", "Arquivo items.bin salvo!")

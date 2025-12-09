@@ -2,29 +2,31 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 import struct
 
-BLOCK_SIZE = 128  # blocos detectados (2 por item)
-ITEM_SIZE = BLOCK_SIZE * 2  # 256 bytes por item
+# O shop_decoded.bin possui um cabeçalho fixo de 48 bytes seguido por
+# registros de 0x6C (108) bytes com os dados de cada item.
+HEADER_SIZE = 48
+ITEM_SIZE = 0x6C
+
+# Offsets dentro de cada registro
+NAME_OFFSET = 0x00
+NAME_SIZE = 32
+CATEGORY_OFFSET = 0x54  # valor de 4 bytes (ex.: 0x00010000 / 0x00020000)
+BUYABLE_OFFSET = 0x50   # 1 byte (0 ou 0x71 nos dumps atuais)
+ID_OFFSET = 0x5C        # identificador/índice do item
 
 
 # -------------------------------
 # Função para ler um item
 # -------------------------------
 def parse_item(data, offset):
-    block1 = data[offset:offset + BLOCK_SIZE]
-    block2 = data[offset + BLOCK_SIZE:offset + ITEM_SIZE]
+    block = bytearray(data[offset:offset + ITEM_SIZE])
 
-    # Nome sempre no final do bloco
-    name_raw = block1[0x38:0x38 + 32]
+    name_raw = block[NAME_OFFSET:NAME_OFFSET + NAME_SIZE]
     name = name_raw.split(b"\x00")[0].decode("ascii", errors="ignore")
 
-    # ID little endian nos bytes 0x30–0x34
-    item_id = struct.unpack("<I", block1[0x30:0x34])[0]
-
-    # categoria = primeiros 2 bytes
-    category = struct.unpack("<H", block1[0:2])[0]
-
-    # flag buyable = bytes 0x2C–0x2E
-    buy_flag = block1[0x2C]
+    item_id = struct.unpack("<I", block[ID_OFFSET:ID_OFFSET + 4])[0]
+    category = struct.unpack("<I", block[CATEGORY_OFFSET:CATEGORY_OFFSET + 4])[0]
+    buy_flag = block[BUYABLE_OFFSET]
 
     return {
         "offset": offset,
@@ -32,8 +34,7 @@ def parse_item(data, offset):
         "name": name,
         "category": category,
         "buyable": buy_flag,
-        "block1": bytearray(block1),
-        "block2": bytearray(block2)
+        "block": block,
     }
 
 
@@ -41,21 +42,24 @@ def parse_item(data, offset):
 # Função para reconstruir itens
 # -------------------------------
 def rebuild_item(item):
-    b1 = item["block1"]
-    b2 = item["block2"]
+    block = bytearray(item["block"])
 
     # nome
     name_bytes = item["name"].encode("ascii", errors="ignore")
-    name_bytes = name_bytes[:31] + b"\x00"
-    b1[0x38:0x38 + len(name_bytes)] = name_bytes
+    name_bytes = name_bytes[: NAME_SIZE - 1] + b"\x00"
+    block[NAME_OFFSET:NAME_OFFSET + NAME_SIZE] = b"\x00" * NAME_SIZE
+    block[NAME_OFFSET:NAME_OFFSET + len(name_bytes)] = name_bytes
 
     # categoria
-    b1[0:2] = struct.pack("<H", item["category"])
+    block[CATEGORY_OFFSET:CATEGORY_OFFSET + 4] = struct.pack("<I", item["category"])
 
     # buyable flag
-    b1[0x2C] = item["buyable"]
+    block[BUYABLE_OFFSET] = item["buyable"] & 0xFF
 
-    return b1 + b2
+    # id
+    block[ID_OFFSET:ID_OFFSET + 4] = struct.pack("<I", item["id"])
+
+    return block
 
 
 # -------------------------------
@@ -67,6 +71,7 @@ class ShopEditor:
         self.root = root
         self.root.title("BOTS KR - Shop Editor")
         self.data = None
+        self.header = b""
         self.items = []
 
         self.left = tk.Frame(root)
@@ -116,10 +121,15 @@ class ShopEditor:
             with open(path, "rb") as f:
                 self.data = f.read()
 
+            if len(self.data) < HEADER_SIZE:
+                raise ValueError("Arquivo muito pequeno para conter cabeçalho e itens")
+
+            self.header = self.data[:HEADER_SIZE]
+
             self.items = []
             self.listbox.delete(0, tk.END)
 
-            for offset in range(0, len(self.data), ITEM_SIZE):
+            for offset in range(HEADER_SIZE, len(self.data), ITEM_SIZE):
                 block = self.data[offset:offset + ITEM_SIZE]
                 if len(block) < ITEM_SIZE:
                     break
@@ -170,8 +180,7 @@ class ShopEditor:
         new["name"] = "NewItem"
         new["category"] = 0
         new["buyable"] = 1
-        new["block1"] = bytearray(new["block1"])
-        new["block2"] = bytearray(new["block2"])
+        new["block"] = bytearray(new["block"])
 
         self.items.append(new)
         self.listbox.insert(tk.END, f"{new['id']} - {new['name']}")
@@ -188,6 +197,7 @@ class ShopEditor:
     # ------------------------------------
     def export(self):
         output = bytearray()
+        output += self.header
 
         for item in self.items:
             output += rebuild_item(item)

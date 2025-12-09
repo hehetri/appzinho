@@ -276,24 +276,35 @@ class ItemEditor:
 
         return data
 
-    def save_item_changes(self):
-        """Aplica as alterações do formulário ao item atualmente selecionado."""
+    def _apply_form_to_current(self) -> bool:
+        """Aplica as alterações do formulário no item selecionado.
+
+        Retorna ``True`` quando a aplicação foi bem-sucedida. Se não houver item
+        selecionado ou ocorrer erro de validação, exibe uma mensagem e retorna
+        ``False``. Essa função centraliza a lógica para evitar que alterações em
+        memória deixem de ser gravadas ao salvar o ``items.bin``.
+        """
+
         if not self.current_item:
             messagebox.showwarning("Atenção", "Selecione um item primeiro.")
-            return
+            return False
 
         updated = self._extract_form_values()
         if not updated:
-            return
+            return False
 
-        # Atualiza apenas os campos, preservando a referência do item em self.items
         for key, value in updated.items():
             if key == "stats":
                 self.current_item[key].update(value)
             else:
                 self.current_item[key] = value
 
-        messagebox.showinfo("OK", "Alterações aplicadas!")
+        return True
+
+    def save_item_changes(self):
+        """Aplica as alterações do formulário ao item atualmente selecionado."""
+        if self._apply_form_to_current():
+            messagebox.showinfo("OK", "Alterações aplicadas!")
 
     # ------------------------------------------------------
     def save_bin(self):
@@ -304,13 +315,8 @@ class ItemEditor:
 
         # Garante que o item selecionado tenha as últimas edições antes de salvar
         if self.current_item:
-            updated = self._extract_form_values()
-            if updated:
-                for key, value in updated.items():
-                    if key == "stats":
-                        self.current_item[key].update(value)
-                    else:
-                        self.current_item[key] = value
+            if not self._apply_form_to_current():
+                return
 
         with builtins.open("items.bin", "wb") as bin_file:
             bin_file.write(b"\x00\x00\x00\x00")  # header original

@@ -37,6 +37,32 @@ def pad_string(value: str, length: int = 31) -> bytes:
     return encoded + b"\x00" * (length - len(encoded))
 
 
+def _sync_buyable_digit(item: Dict[str, object]) -> None:
+    """Atualiza o 7º dígito do ID para refletir o campo ``buyable``.
+
+    O binário original codifica se o item está disponível na loja no dígito na
+    posição 7 (índice 6) do ID para bots (prefixos 11, 12 ou 13). Para que a
+    edição de "Disponível na loja (0/1)" seja persistida no arquivo, precisamos
+    reescrever esse dígito conforme o valor informado no formulário.
+    """
+
+    s_id = list(str(item["id"]))
+    if len(s_id) < 7:
+        return
+
+    try:
+        bot = int(item.get("bot", 0))
+        buyable = int(item.get("buyable", 0))
+    except (TypeError, ValueError):
+        return
+
+    if bot not in (1, 2, 3):
+        return
+
+    s_id[6] = "0" if buyable else "1"
+    item["id"] = int("".join(s_id))
+
+
 # ============================================================
 # Carregar itens do arquivo BIN
 # ============================================================
@@ -298,6 +324,8 @@ class ItemEditor:
                 self.current_item[key].update(value)
             else:
                 self.current_item[key] = value
+
+        _sync_buyable_digit(self.current_item)
 
         return True
 
